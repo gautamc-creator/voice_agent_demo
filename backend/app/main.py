@@ -1,15 +1,51 @@
-from fastapi import FastAPI
+# from openai import OpenAI
+# from google import genai
+from fastapi import FastAPI,UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from app.elastic import es
 from app.schemas import ChatRequest
+import os
+from dotenv import load_dotenv
+# from app.gemini_client import client
+from google.genai.types import GenerateContentConfig
+from google import genai
 
+
+
+load_dotenv()
+
+# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+client = genai.Client()
+
+# client = OpenAI()
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 INDEX_NAME = "websites_semantic_v0"
 
+@app.post("/stt")
+async def stt(file: UploadFile):
+    # Get audio bytes
+    audio_bytes = await file.read()
+
+    # send to STT engine (Whisper / Gemini STT)
+    # convert and return text
+    text = "Hi Hello"
+    # text = transcribe_audio_bytes(audio_bytes)
+    return {"text": text}
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-    response = es.search(
+    # 1. Semantic search
+    search_response = es.search(
         index=INDEX_NAME,
         size=5,
         _source=["title", "url", "body"],
@@ -21,17 +57,95 @@ def chat(req: ChatRequest):
         }
     )
 
-    results = []
+    if not search_response["hits"]["hits"]:
+        return {
+            "answer": "I couldn't find this information on the website.",
+            "sources": []
+        }
 
-    for hit in response["hits"]["hits"]:
-        results.append({
-            "id": hit["_id"],
-            "title": hit["_source"].get("title"),
-            "url": hit["_source"].get("url"),
-            "content": hit["_source"].get("body")
+    # 2. Collect chunk IDs
+    doc_ids = [hit["_id"] for hit in search_response["hits"]["hits"]]
+
+    # 3. ESQL grounding (title + url)
+    esql_query = f"""
+    FROM {INDEX_NAME} METADATA _id
+    | WHERE _id IN ({",".join([f'"{id}"' for id in doc_ids])})
+    | KEEP title, url
+    """
+
+    esql_response = es.esql.query(query=esql_query)
+
+    sources = []
+    for row in esql_response["values"]:
+        sources.append({
+            "title": row[0],
+            "url": row[1]
         })
 
+    # 4. Build context for LLM
+    context_blocks = []
+    for hit in search_response["hits"]["hits"]:
+        context_blocks.append(hit["_source"]["body"])
+
+    context_text = "\n\n".join(context_blocks)
+
+    
+ 
+    # 5. Call LLM
+
+    SYSTEM_INSTRUCTION = """
+        You are a website-specific assistant.
+        Rules:
+        - Answer ONLY using provided context.
+        - Do NOT use outside knowledge.
+        - If not found in context, say "I couldn't find this information on the website."
+        - Include relevant source URLs in markdown.
+    """
+    
+    # completion = client.chat.completions.create(
+    #     model="gpt-4o-mini",
+    #     messages=[
+    #         {"role": "system", "content": SYSTEM_PROMPT},
+    #         {
+    #             "role": "user",
+    #             "content": f"""
+    #                     Context:
+    #                     {context_text}
+
+    #                     Question:
+    #                     {req.query}
+    #                     """
+    #         }
+    #     ],
+    #     temperature=0
+    # )
+
+    # answer = completion.choices[0].message.content
+    
+    
+    
+    full_prompt = f"""
+        Context:
+        {context_text}
+
+        Question:
+        {req.query}
+        """
+        
+    # response = client.models.generate_content(
+    #     model="gemini-2.0-flash",
+    #     contents=full_prompt,
+    #     config=GenerateContentConfig(
+    #         system_instruction=SYSTEM_INSTRUCTION,
+    #         max_output_tokens=512,
+    #         temperature=0.0
+    #     )
+    # )
+
+    # answer_text = response.text
+    answer_text = "Hi"
+     
     return {
-        "query": req.query,
-        "results": results
+        "answer": answer_text,
+        "sources": sources
     }
