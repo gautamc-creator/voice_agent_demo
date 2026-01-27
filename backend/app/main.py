@@ -1,7 +1,8 @@
-# from openai import OpenAI
+from openai import OpenAI
 # from google import genai
-from fastapi import FastAPI,UploadFile
+from fastapi import FastAPI,UploadFile,HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.elastic import es
 from app.schemas import ChatRequest
 import os
@@ -9,16 +10,17 @@ from dotenv import load_dotenv
 # from app.gemini_client import client
 from google.genai.types import GenerateContentConfig
 from google import genai
+import io
 
 
 
 load_dotenv()
 
-# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 # genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-client = genai.Client()
+# client = genai.Client()
 
-# client = OpenAI()
+client = OpenAI()
 app = FastAPI()
 
 app.add_middleware(
@@ -32,15 +34,44 @@ app.add_middleware(
 INDEX_NAME = "websites_semantic_v0"
 
 @app.post("/stt")
-async def stt(file: UploadFile):
-    # Get audio bytes
-    audio_bytes = await file.read()
+async def speech_to_text(file: UploadFile):
+    """
+    Accepts an audio file (webm/wav/mp3),
+    sends it to Whisper,
+    returns transcribed text.
+    """
 
-    # send to STT engine (Whisper / Gemini STT)
-    # convert and return text
-    text = "Hi Hello"
-    # text = transcribe_audio_bytes(audio_bytes)
-    return {"text": text}
+    if file is None:
+        raise HTTPException(status_code=400, detail="Audio file is required")
+
+    try:
+        # Read audio bytes
+        audio_bytes = await file.read()
+
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file")
+
+        # Whisper requires file-like object with name
+        audio_buffer = io.BytesIO(audio_bytes)
+        audio_buffer.name = file.filename or "audio.webm"
+
+        # Call Whisper
+        transcription = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_buffer,
+            response_format="text"  # returns plain string
+        )
+
+        return JSONResponse(
+            content={"text": transcription},
+            status_code=200
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"STT failed: {str(e)}"
+        )
 
 @app.post("/chat")
 def chat(req: ChatRequest):
@@ -93,7 +124,7 @@ def chat(req: ChatRequest):
  
     # 5. Call LLM
 
-    SYSTEM_INSTRUCTION = """
+    SYSTEM_PROMPT = """
         You are a website-specific assistant.
         Rules:
         - Answer ONLY using provided context.
@@ -102,35 +133,35 @@ def chat(req: ChatRequest):
         - Include relevant source URLs in markdown.
     """
     
-    # completion = client.chat.completions.create(
-    #     model="gpt-4o-mini",
-    #     messages=[
-    #         {"role": "system", "content": SYSTEM_PROMPT},
-    #         {
-    #             "role": "user",
-    #             "content": f"""
-    #                     Context:
-    #                     {context_text}
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"""
+                        Context:
+                        {context_text}
 
-    #                     Question:
-    #                     {req.query}
-    #                     """
-    #         }
-    #     ],
-    #     temperature=0
-    # )
+                        Question:
+                        {req.query}
+                        """
+            }
+        ],
+        temperature=0
+    )
 
-    # answer = completion.choices[0].message.content
+    answer = completion.choices[0].message.content
     
     
     
-    full_prompt = f"""
-        Context:
-        {context_text}
+    # full_prompt = f"""
+    #     Context:
+    #     {context_text}
 
-        Question:
-        {req.query}
-        """
+    #     Question:
+    #     {req.query}
+    #     """
         
     # response = client.models.generate_content(
     #     model="gemini-2.0-flash",
@@ -143,9 +174,9 @@ def chat(req: ChatRequest):
     # )
 
     # answer_text = response.text
-    answer_text = "Hi"
+    # answer_text = "Hi"
      
     return {
-        "answer": answer_text,
+        "answer": answer,
         "sources": sources
     }
