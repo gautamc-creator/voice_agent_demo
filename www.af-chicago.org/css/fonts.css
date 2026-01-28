@@ -1,0 +1,20 @@
+@font-face {
+    font-family: "caracteres_1";
+    src: url("../fonts/caracteres_l1-webfont.woff2") format("woff2"), url("../fonts/caracteres_l1-webfont.woff") format("woff");
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "caracteres_2";
+    src: url("../fonts/caracteres_l2-webfont.woff2") format("woff2"), url("../fonts/caracteres_l2-webfont.woff") format("woff");
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "caracteres_4";
+    src: url("../fonts/caracteres_l4-webfont.woff2") format("woff2"), url("../fonts/caracteres_l4-webfont.woff") format("woff");
+    font-weight: normal;
+    font-style: normal;
+}
